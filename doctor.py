@@ -379,6 +379,60 @@ class Doctor(PluginBase.Plugin):
 
         msg = "configured to use pf_ring={} pcap={} plugin={}".format(pfring_in_use, linked, plugin)
         return self.ok_if(msg, success)
+    
+    def check_af_packet(self):
+        """Checking af_packet configuration
+        
+        If bro is configured to use af_packet, it needs to be linked against it.
+        If bro is linked against af_packet, it should be using it.
+
+        If the bro af_packet plugin is installed, the interface name should start with af_packet::
+        """
+
+        afpacket_configured = any(n.lb_method == 'custom' for n in self.nodes())
+
+        afpacket_linked = {}
+        afpacket_plugin = {}
+        in_use = False
+        for (n, success, output) in self._ldd_bro():
+            out = ''.join(output)
+            afpacket_linked[n] = 'AF_Packet' in out
+        for (n, success, output) in self._list_plugins():
+            out = ''.join(output)
+            afpacket_plugin[n] = 'Bro::AF_Packet' in out
+
+
+        linked = True
+        plugin = True
+        afpacket_in_use = False
+        success = True
+        for node in self.nodes():
+            intf = node.interface
+            if not intf:
+                continue
+            intf_afp = intf.startswith('af_packet::')
+            linked_or_plugin = afpacket_linked[node] or afpacket_plugin[node]
+            if node.lb_method == 'custom':
+                if not linked_or_plugin:
+                    self.err("bro binary on node {} is neither linked against af_packet libpcap or using the bro af_packet plugin".format(node))
+                    success = False
+            elif linked_or_plugin:
+                    self.err("bro binary on node {} is linked against af_packet libpcap or the bro af_packet plugin but lb_method is not af_packet".format(node))
+                    success = False
+            if afpacket_plugin[node] and not intf_afp:
+                    self.err("bro binary on node {} has the af_packet plugin installed but the interface name does not start with af_packet::".format(node))
+                    success = False
+            if not afpacket_plugin[node] and intf_afp:
+                    self.err("bro binary on node {} does not have the af_packet plugin installed but the interface name starts with af_packet::".format(node))
+                    success = False
+    
+            if node.lb_method == 'custom' and intf_afp:
+                afpacket_in_use = True
+            linked = linked and afpacket_linked[node]
+            plugin = plugin and afpacket_plugin[node]
+
+        msg = "configured to use af_packet={} pcap={} plugin={}".format(afpacket_in_use, linked, plugin)
+        return self.ok_if(msg, success)
 
     def check_duplicate_5_tuples(self):
         """Checking if any recent connections have been logged multiple times
